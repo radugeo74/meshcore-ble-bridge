@@ -84,6 +84,39 @@ MeshCore TCP bridge listening on port 5000
 Then add or reconfigure MeshCore-HA with connection type `TCP`, using the ESPHome
 device address and port `5000`.
 
+
+## BLE reconnection diagnostics (experimental branch)
+
+For diagnosis of repeated `ESP_GATTC_DISCONNECT_EVT reason 0x08` after a successful
+PIN pairing, use the branch `diagnostic/ble-reconnect` rather than `main`:
+
+```yaml
+external_components:
+  - source: github://radugeo74/meshcore-ble-bridge@diagnostic/ble-reconnect
+    refresh: 1d
+    components: [meshcore_ble_bridge]
+```
+
+Leave `force_encryption: true`, `wait_for_auth: true`, and the existing
+`esp32_ble.io_capability: keyboard_only` and passkey automation enabled.
+
+The patch does **not** change bonding, authentication, connection timing, or
+reconnection behavior. It adds log messages for:
+
+- immediate return status from `esp_ble_set_encryption` (a successful return
+  means only that ESP-IDF accepted the request, not that encryption succeeded);
+- BLE security request, passkey request, and key exchange events, without
+  printing any PIN or key material;
+- connection teardown state: whether authentication completed and the bridge
+  became ready before the disconnect.
+
+Capture DEBUG logs spanning initial pairing, a normal reconnect, and the first
+disconnect. Compare an initial successful session with the subsequent failure.
+Do not enable `VERY_VERBOSE` BLE scanning.
+
+This branch has **not yet been compiled or verified on the target ESP32**.
+Preserve a copy of the currently working YAML and use OTA rollback if needed.
+
 ## Project notes
 
 This component was coded through Codex.
