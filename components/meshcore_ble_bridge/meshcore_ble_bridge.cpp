@@ -58,7 +58,14 @@ void MeshCoreBLEBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt
       // allows a single MTU exchange per connection. We only observe its result in CFG_MTU_EVT.
       if (this->force_encryption_) {
         ESP_LOGD(TAG, "Requesting authenticated BLE encryption");
-        esp_ble_set_encryption(this->parent()->get_remote_bda(), ESP_BLE_SEC_ENCRYPT_MITM);
+        const esp_err_t encryption_result =
+            esp_ble_set_encryption(this->parent()->get_remote_bda(), ESP_BLE_SEC_ENCRYPT_MITM);
+        if (encryption_result != ESP_OK) {
+          ESP_LOGE(TAG, "BLE security diagnostic: esp_ble_set_encryption failed, esp_err=0x%X",
+                   static_cast<unsigned>(encryption_result));
+        } else {
+          ESP_LOGI(TAG, "BLE security diagnostic: encryption request accepted by ESP-IDF (not yet authenticated)");
+        }
       }
       break;
 
@@ -76,6 +83,8 @@ void MeshCoreBLEBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt
       break;
 
     case ESP_GATTC_DISCONNECT_EVT:
+      ESP_LOGW(TAG, "BLE security diagnostic: disconnected; auth_complete=%s ble_ready=%s",
+               YESNO(this->auth_complete_), YESNO(this->ble_ready_));
       ESP_LOGW(TAG, "BLE disconnected, closing TCP client");
       this->reset_ble_state_();
       this->close_client_();
@@ -149,20 +158,34 @@ void MeshCoreBLEBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt
 }
 
 void MeshCoreBLEBridge::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
-  if (event != ESP_GAP_BLE_AUTH_CMPL_EVT)
-    return;
+  // Diagnostics only: no PINs, key material, or stored bonding data are logged.
+  // ESPHome's BLE client still owns passkey handling and security configuration.
+  switch (event) {
+    case ESP_GAP_BLE_SEC_REQ_EVT:
+      ESP_LOGI(TAG, "BLE security diagnostic: security request received");
+      break;
+    case ESP_GAP_BLE_PASSKEY_REQ_EVT:
+      ESP_LOGI(TAG, "BLE security diagnostic: passkey requested");
+      break;
+    case ESP_GAP_BLE_KEY_EVT:
+      ESP_LOGI(TAG, "BLE security diagnostic: key exchange event (key contents not logged)");
+      break;
+    case ESP_GAP_BLE_AUTH_CMPL_EVT:
+      if (!this->address_matches_(param->ble_security.auth_cmpl.bd_addr))
+        return;
 
-  if (!this->address_matches_(param->ble_security.auth_cmpl.bd_addr))
-    return;
-
-  if (param->ble_security.auth_cmpl.success) {
-    this->auth_complete_ = true;
-    ESP_LOGI(TAG, "BLE authentication complete, mode=%d", param->ble_security.auth_cmpl.auth_mode);
-    this->maybe_enable_notifications_();
-  } else {
-    this->auth_complete_ = false;
-    ESP_LOGE(TAG, "BLE authentication failed, reason=%d", param->ble_security.auth_cmpl.fail_reason);
-    this->close_client_();
+      if (param->ble_security.auth_cmpl.success) {
+        this->auth_complete_ = true;
+        ESP_LOGI(TAG, "BLE authentication complete, mode=%d", param->ble_security.auth_cmpl.auth_mode);
+        this->maybe_enable_notifications_();
+      } else {
+        this->auth_complete_ = false;
+        ESP_LOGE(TAG, "BLE authentication failed, reason=%d", param->ble_security.auth_cmpl.fail_reason);
+        this->close_client_();
+      }
+      break;
+    default:
+      break;
   }
 }
 
